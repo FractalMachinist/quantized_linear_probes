@@ -27,10 +27,8 @@ def load_challenge_datasets(size: str | None = None, seed: int = 42) -> dict[str
     for name in DATASET_NAMES:
         df = pd.read_csv(DATA_DIR / f"{name}.csv")[["statement", "label"]]
         if size is not None and size < len(df):
-            df = (
-                df.groupby("label", group_keys=False)
-                .apply(lambda g: g.sample(n=min(len(g), size // 2), random_state=seed))
-                .reset_index(drop=True)
-            )
+            df = pd.concat(
+                [g.sample(n=min(len(g), size // 2), random_state=seed) for _, g in df.groupby("label")]
+            ).reset_index(drop=True)
         datasets[name] = df
     return datasets

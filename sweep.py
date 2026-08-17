@@ -3,9 +3,13 @@
 Produces a tidy long-format DataFrame; all plotting/interpretation happens in the notebook.
 """
 
+import json
+from pathlib import Path
+
 import pandas as pd
 import torch as t
 from torch import Tensor
+from tqdm.auto import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from activations import extract_activations
@@ -45,6 +49,9 @@ def run_layer_sweep(
     """
     rows = []
 
+    total_probes = len(datasets) * len(model_variants) * len(PROBE_CLASSES) * len(layers)
+    pbar = tqdm(total=total_probes, desc="Training probes")
+
     for dataset_name, df in datasets.items():
         statements = df["statement"].tolist()
         labels = t.tensor(df["label"].values, dtype=t.float32)
@@ -79,5 +86,42 @@ def run_layer_sweep(
                             "test_acc": test_acc,
                         }
                     )
+                    pbar.update(1)
 
+    pbar.close()
     return pd.DataFrame(rows)
+
+
+def load_results(
+    model: str, size: str, n_statements: int | None = None, results_dir: Path | str = "results"
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Load a sweep previously saved to results/{model}/{size}-{n_statements}/.
+
+    Args:
+        model: Model name, e.g. "llama2-13b" (matches the notebook's MODEL constant).
+        size: Sweep size, "quick" or "full" (matches the notebook's SIZE constant).
+        n_statements: Total statement count suffixing the run's folder name. If None,
+            the single "{size}-*" folder under results/{model}/ is used, raising if
+            there isn't exactly one match.
+        results_dir: Root results directory.
+
+    Returns:
+        (results, metadata): the long-format DataFrame produced by run_layer_sweep,
+        and the run's metadata.json contents.
+    """
+    model_dir = Path(results_dir) / model
+    if n_statements is not None:
+        run_dir = model_dir / f"{size}-{n_statements}"
+    else:
+        matches = sorted(model_dir.glob(f"{size}-*"))
+        if len(matches) != 1:
+            raise FileNotFoundError(
+                f"Expected exactly one '{size}-*' run under {model_dir}, found {len(matches)}: {matches}"
+            )
+        run_dir = matches[0]
+
+    results = pd.read_csv(run_dir / "results.csv")
+    with open(run_dir / "metadata.json") as f:
+        metadata = json.load(f)
+    return results, metadata

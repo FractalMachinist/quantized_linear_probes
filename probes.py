@@ -2,6 +2,8 @@
 chapter1_transformer_interp/exercises/part31_linear_probes/solutions.py (MMProbe, LRProbe).
 """
 
+from functools import cached_property
+
 import torch as t
 from jaxtyping import Float
 from sklearn.linear_model import LogisticRegression
@@ -20,13 +22,22 @@ class MMProbe(t.nn.Module):
     ):
         super().__init__()
         self.direction = t.nn.Parameter(direction, requires_grad=False)
-        if covariance is not None:
-            self.inv = t.nn.Parameter(t.linalg.pinv(covariance, hermitian=True, atol=atol), requires_grad=False)
-        else:
-            self.inv = None
+        self.covariance = covariance
+        self.atol = atol
+
+    @cached_property
+    def inv(self) -> Float[Tensor, "d_model d_model"]:
+        # pinv(self.covariance) is an O(d_model^3) SVD -- e.g. 5120x5120 for llama2-13b --
+        # and was the dominant cost of run_layer_sweep (~240 calls across the full sweep)
+        # even though nothing in this codebase passes iid=True to use it. If you're hitting
+        # this, find out what actually needs iid=True Mahalanobis scoring before restoring
+        # `t.linalg.pinv(self.covariance, atol=self.atol)` here (avoid hermitian=True: it
+        # routes through eigh, which hits a known Intel oneMKL workspace-size bug on CPU
+        # for matrices this large).
+        raise NotImplementedError("MMProbe.inv is unused by the sweep; see comment above before implementing it.")
 
     def forward(self, x: Float[Tensor, "n d_model"], iid: bool = False) -> Float[Tensor, " n"]:
-        if iid and self.inv is not None:
+        if iid:
             return t.sigmoid(x @ self.inv @ self.direction)
         else:
             return t.sigmoid(x @ self.direction)
